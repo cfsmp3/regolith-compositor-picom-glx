@@ -35,3 +35,11 @@ Depends: regolith-compositor-picom-glx,
          xrescat,
          xvfb
 Restrictions: needs-root, allow-stderr
+
+Tests: menu-shadow
+Depends: regolith-compositor-picom-glx,
+         picom,
+         python3,
+         python3-xlib,
+         xvfb
+Restrictions: allow-stderr

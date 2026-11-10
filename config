@@ -204,6 +204,10 @@ wintypes:
     };
     dock = { shadow = true; }
     dnd = { shadow = false; }
+    # Menus draw their own shadow and rounded corners in a transparent margin
+    # (GTK 3, Chromium and Electron do), so a picom shadow around the whole
+    # window shows up as a dark frame. No picom shadow on any kind of menu.
+    menu = { shadow = false; }
     popup_menu = {
         opacity = 1.0;
         shadow = false;
@@ -211,6 +215,7 @@ wintypes:
     }
     dropdown_menu = {
         opacity = 1.0;
+        shadow = false;
         fade = false;
     }
 };

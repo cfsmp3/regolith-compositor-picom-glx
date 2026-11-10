@@ -1,0 +1,83 @@
+#!/bin/sh
+# Menus get no picom shadow. Chromium, Electron and GTK 3 menus draw their own
+# shadow in a transparent margin, and a picom shadow around that margin shows
+# as a dark frame (regolith-desktop discussion 949). Normal windows keep theirs.
+set -eu
+
+tmp=${AUTOPKGTEST_TMP:-$(mktemp -d)}
+Xvfb :93 -screen 0 1280x800x24 +extension Composite -ac -noreset -nolisten tcp \
+    > "$tmp/xvfb.log" 2>&1 &
+xvfb=$!
+picom=
+trap 'kill $picom "$xvfb" 2>/dev/null || true' EXIT
+for _ in $(seq 50); do
+    [ -S /tmp/.X11-unix/X93 ] && break
+    sleep .1
+done
+
+DISPLAY=:93 picom --config /etc/regolith/picom/config --backend xrender \
+    > "$tmp/picom.log" 2>&1 &
+picom=$!
+sleep 2
+if ! kill -0 "$picom" 2>/dev/null; then
+    cat "$tmp/picom.log"
+    echo "FAIL: picom did not start"
+    exit 1
+fi
+
+DISPLAY=:93 python3 - <<'EOF'
+import sys
+import time
+
+from Xlib import X, Xatom, display
+
+d = display.Display()
+screen = d.screen()
+root = screen.root
+NET_WM_WINDOW_TYPE = d.intern_atom("_NET_WM_WINDOW_TYPE")
+
+def window(x, y, w, h, pixel, kind, name):
+    win = root.create_window(x, y, w, h, 0, screen.root_depth,
+                             background_pixel=pixel, override_redirect=True)
+    win.set_wm_name(name)
+    atom = d.intern_atom("_NET_WM_WINDOW_TYPE_" + kind)
+    win.change_property(NET_WM_WINDOW_TYPE, Xatom.ATOM, 32, [atom])
+    return win
+
+def pixel(x, y):
+    image = root.get_image(x, y, 1, 1, X.ZPixmap, 0xFFFFFFFF)
+    return image.data[2]  # red channel of a BGRX pixel
+
+# A white backdrop, smaller than the screen so picom keeps compositing.
+backdrop = window(40, 40, 900, 600, screen.white_pixel, "DESKTOP", "backdrop")
+backdrop.map()
+d.sync()
+time.sleep(1)
+
+# The config draws the shadow 7 px around the window, moved 5 px up and
+# left, so it is darkest just past the window's right edge.
+X0, Y0, W, H = 300, 200, 240, 160
+probe = (X0 + W + 1, Y0 + H // 2)
+before = pixel(*probe)
+
+expected = {"MENU": False, "DROPDOWN_MENU": False, "POPUP_MENU": False,
+            "NORMAL": True}
+failed = False
+for kind, want in expected.items():
+    win = window(X0, Y0, W, H, screen.black_pixel, kind, "test " + kind.lower())
+    win.map()
+    d.sync()
+    time.sleep(1.5)
+    after = pixel(*probe)
+    has_shadow = after < before - 20
+    verdict = "ok" if has_shadow == want else "FAIL"
+    failed |= has_shadow != want
+    print(f"{verdict}: {kind} window: backdrop {before} -> {after} beside it, "
+          f"shadow {'drawn' if has_shadow else 'not drawn'} "
+          f"(expected {'drawn' if want else 'none'})")
+    win.destroy()
+    d.sync()
+    time.sleep(1)
+
+sys.exit(1 if failed else 0)
+EOF
